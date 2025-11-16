@@ -1,92 +1,59 @@
-# Mini-Rsync TLS — C++ Multithreaded File Sync & Backup Utility (Unix)
+# Mini-Rsync TLS — C++ Multithreaded File Sync & Backup Utility (Unix) (TLS + Resumable)
 
 ## 🧠 Project Summary
 
-"A multithreaded C++ file synchronization and backup utility for Unix-based systems. It monitors directories in real-time, detects file changes using inotify, computes SHA-256 hashes, and synchronizes modified files to a remote server over TCP. Built with POSIX APIs, thread pools, and efficient zero-copy file transfer logic."
+A multithreaded C++ file synchronization and backup utility for Unix-based systems. It monitors directories in real-time, detects file changes using inotify, resumable chunked transfers, computes SHA-256 hashes, and synchronizes modified files to a remote server over TCP and do end-to-end encryption via mutual TLS (mTLS). Built with POSIX APIs, thread pools, and efficient zero-copy file transfer logic.
 
-## Project Description
+**🔧 Built using only C++, POSIX system calls, and OpenSSL.**
 
-This project demonstrates:
+## 🚀 Features
 
-- **Mutual TLS (mTLS)** using OpenSSL: server requires client certificate and client verifies server certificate.
-- **Unified client** with inotify-based live watching and initial scan.
-- **File system handling (stat, inotify, permissions)**
-- **Chunked transfer with resume**: client can resume partial uploads by sending an offset.
-- **Improved logging and safe write (tmp + rename)**
-- **Multithreading (C++ threads / mutex / condition variables)**
-- **Low-level Unix system calls**
-- **Socket programming (TCP client/server)**
-- **Hashing algorithms (SHA-256 for integrity)**
-- **Real-world functionality**
-- **Clean architecture**
-It contains **Makefile** with build targets for server & client.
+- 🔐 Secure Transfer
 
-## 🚀 How the Project Works
+  - Mutual TLS (client & server certificate verification)
+  - OpenSSL-based encrypted transport layer
+  - Protection against MITM attacks
 
-1. Directory is monitored using inotify
+- ⚡ High-Performance Sync
 
-- inotify_init(), inotify_add_watch()
-- These detect:
-  - File created
-  - File modified
-  - File deleted
-  - File renamed
-- Every event is pushed into a work queue.
+  - Multithreaded worker pool for parallel file chunk uploads
+  - Efficient job queue with lock-guarded task scheduling
+  - Chunk-based resume support (append from last offset)
 
-**Example**:
-"test.txt was modified" → add to queue
+- 📡 Real-Time Monitoring
 
-2. A file-change event triggers a hash comparison
+  - Linux inotify detects:
+    - file create
+    - modify
+    - delete
+    - move
+  - Immediate upload to server on change
 
-- The system computes a SHA-256 hash:
-  - If old hash == new hash → do nothing
-  - If different → file is added to sync queue
-- This avoids sending unchanged files.
+- 🧱 Data Integrity
 
-3. Thread Pool Handles Sync Jobs
+  - SHA-256 hashing
+  - Temporary .tmp files + atomic rename
+  - Corruption-safe partial uploads
 
-- To speed things up:
-  - Several worker threads wait on a condition variable
-  - When a job arrives, a free thread processes it
-  - This uses std::thread, std::mutex, std::condition_variable
-
-4. File Sent Over TCP Socket
-
-- The client connects to the remote server:
+## 🏗 Architecture Overview
 
 ```
-connect(socket, serverAddress)
-send(fileName)
-send(fileSize)
-send(fileDataChunks)
+flowchart LR
+    subgraph Client[Client (Linux)]
+        A[Inotify Watcher] --> B[Job Queue]
+        B --> C[Thread Pool]
+        C -->|Chunked Upload| TLSClient[TLS Socket]
+    end
+
+    TLSClient -->|Encrypted Stream| TLSServer[TLS Server]
+
+    subgraph Server[Server]
+        TLSServer --> D[Chunk Handler]
+        D --> E[Temp .tmp File]
+        E --> F[Atomic Rename]
+        F --> G[Final Synced File]
+    end
 ```
-
-- On the server side:
-
-```
-accept()
-read header
-create file
-write received data
-fsync() to ensure disk safety
-```
-
-- This teaches real Unix socket programming.
-
-5. Server Writes File to Destination Directory
-
-- Uses open(), write(), close()
-- Permissions set using chmod()
-- Ensures partial transfers don’t corrupt files
-- Temporary file → renamed atomically using rename()
-
-6. Logs Are Written
-
-- Both sides log:
-  - Time of transfer
-  - File size
-  - Number of chunks
-  - Thread ID
 
 ## Build requirements
 
@@ -123,26 +90,45 @@ openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out c
 
 Place `server.crt`, `server.key`, and `ca.crt` next to the server binary. Place `client.crt`, `client.key`, and `ca.crt` next to the client binary.
 
-## Build
+## 🔧 Build & Run
 
 ```bash
 make
 ```
 
-## Run (example)
+- Start TLS Server
+``` ./mini_sync_server_tls ```
 
-Start server (listens and requires client cert):
+- Run Client (watch folder)
+``` ./mini_sync_client_tls ./my_folder ```
 
-```bash
-mkdir -p server_storage
-./bin/mini_sync_server_tls 9443 server_storage server.crt server.key ca.crt
-```
+## 🔐 Certificates (mTLS)
 
-Run client (presents client cert):
+- Generate certificates using: ``` ./docs/generate_certs.sh ```
 
-```bash
-./bin/mini_sync_client_tls 127.0.0.1 9443 /path/to/watch client.crt client.key ca.crt
-```
+- The script creates:
+  - ca.crt, ca.key
+  - server.crt, server.key
+  - client.crt, client.key
+- Client validates server, server validates client.
+
+## 📘 Technologies Used
+
+- C++17 (modern C++)
+- POSIX Sockets
+- OpenSSL mTLS
+- Linux Inotify
+- Thread Pool
+- SHA-256 Hashing
+
+## 🧪 What This Project Demonstrates
+
+✔ Systems programming
+✔ Concurrency & synchronization
+✔ Security engineering (TLS/mTLS)
+✔ Linux internals (inotify, epoll, file descriptors)
+✔ Network programming
+✔ Low-level performance optimization
 
 ## Protocol (summary)
 
@@ -157,5 +143,16 @@ Run client (presents client cert):
 - Self-signed certs only for testing.
 - No authentication beyond cert verification.
 - Not production hardened; uses blocking I/O for clarity.
+
+## 📝 License
+
+- MIT License
+
+## 🏆 This project is ideal for:
+
+- Systems Engineer
+- Backend Developer
+- DevOps/SRE roles
+- Low-level/C++ positions
 
 ## Developed by **Koushik Tripathy** ##
