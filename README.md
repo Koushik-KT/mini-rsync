@@ -1,81 +1,161 @@
-📌 Full-Stack Multi-Tech Portfolio Project
+# Mini-Rsync TLS — C++ Multithreaded File Sync & Backup Utility (Unix)
 
-A comprehensive full-stack application built with React, Node.js, Java (Oracle), Python, and C++, designed to showcase real-world architecture, multi-service integration, and clean code practices for production-quality development.
+## 🧠 Project Summary
 
-🚀 Tech Stack
-Layer	Technology
-Frontend	React + Tailwind + Axios
-Backend API	Node.js + Express
-Microservice	Java + Oracle Database + PL/SQL
-Automation	Python
-System Utility	C++
-Deployment	GitHub, GitHub Pages, Docker (optional)
-🎯 Features
+"A multithreaded C++ file synchronization and backup utility for Unix-based systems. It monitors directories in real-time, detects file changes using inotify, computes SHA-256 hashes, and synchronizes modified files to a remote server over TCP. Built with POSIX APIs, thread pools, and efficient zero-copy file transfer logic."
 
-🔐 Authentication & session handling
+## Project Description
 
-📡 RESTful API with Node.js
+This project demonstrates:
 
-🗄 Java + Oracle service for heavy operations
+- **Mutual TLS (mTLS)** using OpenSSL: server requires client certificate and client verifies server certificate.
+- **Unified client** with inotify-based live watching and initial scan.
+- **File system handling (stat, inotify, permissions)**
+- **Chunked transfer with resume**: client can resume partial uploads by sending an offset.
+- **Improved logging and safe write (tmp + rename)**
+- **Multithreading (C++ threads / mutex / condition variables)**
+- **Low-level Unix system calls**
+- **Socket programming (TCP client/server)**
+- **Hashing algorithms (SHA-256 for integrity)**
+- **Real-world functionality**
+- **Clean architecture**
+It contains **Makefile** with build targets for server & client.
 
-⚙ Python scripts for automation / data processing
+## 🚀 How the Project Works
 
-⚡ C++ utility module for fast computations
+1. Directory is monitored using inotify
 
-🎨 Responsive React UI with clean components
+- inotify_init(), inotify_add_watch()
+- These detect:
+  - File created
+  - File modified
+  - File deleted
+  - File renamed
+- Every event is pushed into a work queue.
 
-📦 Modular folder structure for scalability
+**Example**:
+"test.txt was modified" → add to queue
 
-🏗️ Architecture Overview
-flowchart LR
-    UI[React Frontend] -- Axios --> API[Node.js Backend]
-    API -- REST Calls --> JAVA[Java + Oracle Service]
-    JAVA -- SQL/PLSQL --> DB[(Oracle DB)]
-    PY[Python Scripts] -- Cron/Manual --> DB
-    CPP[C++ Utility] -- Executable --> API
+2. A file-change event triggers a hash comparison
 
-📂 Project Structure
-/project-root
-│── frontend-react/
-│── backend-node/
-│── java-oracle-service/
-│── python-scripts/
-│── cpp-utils/
-│── docs/
-│── README.md
+- The system computes a SHA-256 hash:
+  - If old hash == new hash → do nothing
+  - If different → file is added to sync queue
+- This avoids sending unchanged files.
 
-⚙️ Setup & Run
-Frontend
-cd frontend-react
-npm install
-npm run dev
+3. Thread Pool Handles Sync Jobs
 
-Backend (Node.js)
-cd backend-node
-npm install
-npm start
+- To speed things up:
+  - Several worker threads wait on a condition variable
+  - When a job arrives, a free thread processes it
+  - This uses std::thread, std::mutex, std::condition_variable
 
-Java Service
+4. File Sent Over TCP Socket
 
-Requires Oracle XE
+- The client connects to the remote server:
 
-Use provided SQL scripts
+```
+connect(socket, serverAddress)
+send(fileName)
+send(fileSize)
+send(fileDataChunks)
+```
 
-Run via Maven or IDE
+- On the server side:
 
-Python Automation
-python script.py
+```
+accept()
+read header
+create file
+write received data
+fsync() to ensure disk safety
+```
 
-C++ Utility
+- This teaches real Unix socket programming.
 
-Compile:
+5. Server Writes File to Destination Directory
 
-g++ tool.cpp -o tool
+- Uses open(), write(), close()
+- Permissions set using chmod()
+- Ensures partial transfers don’t corrupt files
+- Temporary file → renamed atomically using rename()
 
-🌍 Deployment (Optional)
+6. Logs Are Written
 
-React → GitHub Pages
+- Both sides log:
+  - Time of transfer
+  - File size
+  - Number of chunks
+  - Thread ID
 
-Node.js / Java → Render, Railway, or your own server
+## Build requirements
 
-Oracle → Local XE or remote server
+- Linux (inotify)
+- g++ (C++17)
+- libssl-dev (OpenSSL)
+- make
+
+Install dependencies (Debian/Ubuntu):
+
+```bash
+sudo apt update && sudo apt install -y build-essential libssl-dev
+```
+
+## Generate test certificates (self-signed) — quick guide
+
+This project expects PEM files for server and client. For testing only, create a self-signed CA, sign server and client certs.
+
+```bash
+# create CA
+openssl genrsa -out ca.key 4096
+openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 -out ca.crt -subj "/CN=MiniRsync-CA"
+
+# server key + CSR + cert
+openssl genrsa -out server.key 2048
+openssl req -new -key server.key -out server.csr -subj "/CN=mini-rsync-server"
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 3650 -sha256
+
+# client key + CSR + cert
+openssl genrsa -out client.key 2048
+openssl req -new -key client.key -out client.csr -subj "/CN=mini-rsync-client"
+openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out client.crt -days 3650 -sha256
+```
+
+Place `server.crt`, `server.key`, and `ca.crt` next to the server binary. Place `client.crt`, `client.key`, and `ca.crt` next to the client binary.
+
+## Build
+
+```bash
+make
+```
+
+## Run (example)
+
+Start server (listens and requires client cert):
+
+```bash
+mkdir -p server_storage
+./bin/mini_sync_server_tls 9443 server_storage server.crt server.key ca.crt
+```
+
+Run client (presents client cert):
+
+```bash
+./bin/mini_sync_client_tls 127.0.0.1 9443 /path/to/watch client.crt client.key ca.crt
+```
+
+## Protocol (summary)
+
+1. TLS handshake (mutual): both sides verify peer cert using `ca.crt`.
+2. Client sends: 4-byte filename length (network), filename bytes, 8-byte file size (network), 8-byte offset (network).
+3. Server responds with 1 byte: 0 = OK to send, 1 = error.
+4. Client streams bytes from `offset` onwards in 8KB chunks.
+5. Server writes to `<dest>/<filename>.tmp`, fsyncs, and renames to final filename on completion.
+
+## Limitations
+
+- Self-signed certs only for testing.
+- No authentication beyond cert verification.
+- Not production hardened; uses blocking I/O for clarity.
+
+## Developed by **Koushik Tripathy** ##
